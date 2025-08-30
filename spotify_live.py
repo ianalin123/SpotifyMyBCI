@@ -15,8 +15,8 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = 'Your Spotify Key'
 
-SPOTIFY_CLIENT_ID = 'Your Spotify Client ID'
-SPOTIFY_CLIENT_SECRET = 'Your Spotify Client ID'
+SPOTIFY_CLIENT_ID = 'REDACTED_PASSWORD_1'
+SPOTIFY_CLIENT_SECRET = 'REDACTED_PASSWORD_2'
 REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:5000/callback")
 
 AUTH_URL = "https://accounts.spotify.com/authorize"
@@ -31,7 +31,7 @@ access_token_global = None
 # -----------------------------
 EMOTIV_CLIENT_ID = os.getenv("CLIENT_ID", "")
 EMOTIV_CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
-PROFILE_NAME = os.getenv("PROFILE_NAME", "TRAW spins")
+PROFILE_NAME = "Cognihacks Iana"
 HEADSET_ID = os.getenv("HEADSET_ID", "")  # optional
 
 def _require_config():
@@ -164,7 +164,7 @@ class SpotifyLive(LiveAdvance):
     """
     Extends the working LiveAdvance so that com events trigger Spotify actions.
     Maps:
-      - 'lift'  (power > 0.5) -> pause
+      - 'push'  (power > 0.5) -> pause
       - 'drop'  (power > 0.5) -> resume
       - 'neutral' -> no-op
     Adjust thresholds/action mapping as needed.
@@ -185,8 +185,8 @@ class SpotifyLive(LiveAdvance):
             return
 
         # Threshold: 0.5 works well per your live script. Tweak if needed.
-        if action == 'lift' and power > 0.5:
-            print("🎯 LIFT detected -> Spotify PAUSE")
+        if action == 'push' and power > 0.5:
+            print("🎯 PUSH detected -> Spotify PAUSE")
             spotify_pause(access_token_global)
         elif action == 'drop' and power > 0.5:
             print("🔄 DROP detected -> Spotify RESUME")
