@@ -13,7 +13,7 @@ from cortex import Cortex
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = 'Your Spotify Key'
+app.secret_key = 'pk'
 
 SPOTIFY_CLIENT_ID = 'REDACTED_PASSWORD_1'
 SPOTIFY_CLIENT_SECRET = 'REDACTED_PASSWORD_2'
@@ -29,10 +29,11 @@ access_token_global = None
 # -----------------------------
 # Emotiv / Cortex setup copied from your working live.py
 # -----------------------------
-EMOTIV_CLIENT_ID = os.getenv("CLIENT_ID", "")
-EMOTIV_CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
-PROFILE_NAME = "Cognihacks Iana"
-HEADSET_ID = os.getenv("HEADSET_ID", "")  # optional
+# CHANGE THESE 3 to your stuff
+EMOTIV_CLIENT_ID = "REDACTED_PASSWORD_3"
+EMOTIV_CLIENT_SECRET = "REDACTED_PASSWORD_4"
+PROFILE_NAME = "Cognihacks"
+HEADSET_ID = "INSIGHT2-0B15A16B"  # optional
 
 def _require_config():
     missing = []
@@ -175,6 +176,7 @@ class SpotifyLive(LiveAdvance):
     def on_new_com_data(self, *args, **kwargs):
         global access_token_global
         data = kwargs.get('data', {}) or {}
+        print("Raw COM data:", data)
         action = data.get('action')
         power = data.get('power', 0.0)
         print(f"[COM] action={action} power={power:.2f} time={data.get('time')}")
@@ -191,8 +193,16 @@ class SpotifyLive(LiveAdvance):
         elif action == 'drop' and power > 0.5:
             print("🔄 DROP detected -> Spotify RESUME")
             spotify_resume(access_token_global)
+        elif action == 'lift' and power > 0.5:
+            print("➕ LIFT detected -> Queue new track")
+            spotify_queue(access_token_global, "spotify:track:4uLU6hMCjMI75M1A2tKUQC") # Queue Rick Astley "Never Gonna Give You Up"
+        elif action == 'right' and power > 0.5:
+            print("➡️ RIGHT detected -> Skip to next track")
+            spotify_next(access_token_global)
         elif action == 'neutral':
             print("😐 Neutral state - no action")
+
+        
 
 # -----------------------------
 # Spotify helpers
@@ -210,6 +220,27 @@ def spotify_resume(token: str):
     r = requests.put(url, headers=headers)
     if r.status_code not in (200, 204):
         print("[Spotify] Resume failed:", r.status_code, r.text)
+
+def spotify_queue(token: str, track_uri: str, device_id: str = None):
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{API_BASE_URL}me/player/queue"
+    params = {"uri": track_uri}
+    if device_id:
+        params["device_id"] = device_id
+    
+    r = requests.post(url, headers=headers, params=params)
+    if r.status_code != 204:  # success = no content
+        print("[Spotify] Queue failed:", r.status_code, r.text)
+
+def spotify_next(token: str, device_id: str = None):
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{API_BASE_URL}me/player/next"
+    params = {}
+    if device_id:
+        params["device_id"] = device_id
+    r = requests.post(url, headers=headers, params=params)
+    if r.status_code != 204:  # success = no content
+        print("[Spotify] Skip failed:", r.status_code, r.text)
 
 # -----------------------------
 # Flask routes
