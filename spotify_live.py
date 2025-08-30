@@ -25,6 +25,7 @@ API_BASE_URL = "https://api.spotify.com/v1/"
 
 # Global (in-memory) token for demo purposes
 access_token_global = None
+last_action = None
 
 # -----------------------------
 # Emotiv / Cortex setup copied from your working live.py
@@ -47,10 +48,6 @@ def _require_config():
         raise RuntimeError(f"Missing required configuration: {', '.join(missing)}")
 
 class LiveAdvance:
-    """
-    Copied (lightly adapted) from your working live.py. This is the spine that
-    makes your trained profile actually load and emits live 'com' events.
-    """
     def __init__(self, app_client_id, app_client_secret, **kwargs):
         self.c = Cortex(app_client_id, app_client_secret, debug_mode=True, **kwargs)
         self.c.bind(create_session_done=self.on_create_session_done)
@@ -58,6 +55,8 @@ class LiveAdvance:
         self.c.bind(load_unload_profile_done=self.on_load_unload_profile_done)
         self.c.bind(save_profile_done=self.on_save_profile_done)
         self.c.bind(new_com_data=self.on_new_com_data)
+        self.c.bind(new_met_data=self.on_new_met_data)
+        self.c.bind(new_pow_data=self.on_new_pow_data)
         self.c.bind(get_mc_active_action_done=self.on_get_mc_active_action_done)
         self.c.bind(mc_action_sensitivity_done=self.on_mc_action_sensitivity_done)
         self.c.bind(inform_error=self.on_inform_error)
@@ -120,12 +119,33 @@ class LiveAdvance:
 
     def on_save_profile_done (self, *args, **kwargs):
         print('Save profile', self.profile_name, "successfully")
-        self.c.sub_request(['com'])
+        self.c.sub_request(['com', 'met', 'pow'])
 
     def on_new_com_data(self, *args, **kwargs):
         # Default: just print. We'll override this in SpotifyLive.
         data = kwargs.get('data')
         print('Mental Command detected:', data)
+    
+    def on_new_met_data(self, *args, **kwargs):
+        data = kwargs.get('data', {})
+        metrics = data.get('met', [])
+        timestamp = data.get('time')
+
+        # The order of metrics is fixed: ["stress", "engagement", "interest", "relaxation", "excitement", "focus"]
+        if metrics:
+            print(f"[MET] time={timestamp} stress={metrics[0]:.2f} engage={metrics[1]:.2f} "
+                f"interest={metrics[2]:.2f} relax={metrics[3]:.2f} "
+                f"excite={metrics[4]:.2f} focus={metrics[5]:.2f}")
+
+    def on_new_pow_data(self, *args, **kwargs):
+        data = kwargs.get('data', {})
+        powers = data.get('pow', [])
+        timestamp = data.get('time')
+
+        # Band powers: ["theta", "alpha", "lowBeta", "highBeta", "gamma"]
+        if powers:
+            print(f"[POW] time={timestamp} theta={powers[0]:.2f} alpha={powers[1]:.2f} "
+                f"lowBeta={powers[2]:.2f} highBeta={powers[3]:.2f} gamma={powers[4]:.2f}")
 
     def on_get_mc_active_action_done(self, *args, **kwargs):
         data = kwargs.get('data')
@@ -175,8 +195,26 @@ class SpotifyLive(LiveAdvance):
 
     def on_new_com_data(self, *args, **kwargs):
         global access_token_global
+        global last_action 
+        
         data = kwargs.get('data', {}) or {}
-        print("Raw COM data:", data)
+        metrics = data.get('met', [])
+        powers = data.get('pow', [])
+        timestamp = data.get('time')
+
+        # The order of metrics is fixed: ["stress", "engagement", "interest", "relaxation", "excitement", "focus"]
+        if metrics:
+            print(f"[MET] time={timestamp} stress={metrics[0]:.2f} engage={metrics[1]:.2f} "
+                f"interest={metrics[2]:.2f} relax={metrics[3]:.2f} "
+                f"excite={metrics[4]:.2f} focus={metrics[5]:.2f}")
+            
+        # Band powers: ["theta", "alpha", "lowBeta", "highBeta", "gamma"]
+        if powers:
+            print(f"[POW] time={timestamp} theta={powers[0]:.2f} alpha={powers[1]:.2f} "
+                f"lowBeta={powers[2]:.2f} highBeta={powers[3]:.2f} gamma={powers[4]:.2f}")
+
+
+        # ("Raw COM data:", data)
         action = data.get('action')
         power = data.get('power', 0.0)
         print(f"[COM] action={action} power={power:.2f} time={data.get('time')}")
@@ -186,24 +224,25 @@ class SpotifyLive(LiveAdvance):
             print("[Spotify] No access token yet. Log in at /login.")
             return
 
-        # Threshold: 0.5 works well per your live script. Tweak if needed.
-        if action == 'push' and power > 0.5:
-            print("🎯 PUSH detected -> Spotify PAUSE")
-            spotify_pause(access_token_global)
-        elif action == 'drop' and power > 0.5:
-            print("🔄 DROP detected -> Spotify RESUME")
-            spotify_resume(access_token_global)
-        elif action == 'lift' and power > 0.5:
-            print("➕ LIFT detected -> Queue new track")
-            spotify_queue(access_token_global, "spotify:track:4uLU6hMCjMI75M1A2tKUQC") # Queue Rick Astley "Never Gonna Give You Up"
-        elif action == 'right' and power > 0.5:
-            print("➡️ RIGHT detected -> Skip to next track")
-            spotify_next(access_token_global)
-        elif action == 'neutral':
-            print("😐 Neutral state - no action")
+        if action != last_action and power >= 0.5:
+            if action == 'push':
+                print("🎯 PUSH detected -> Spotify PAUSE")
+                spotify_pause(access_token_global)
+            elif action == 'drop':
+                print("🔄 DROP detected -> Spotify RESUME")
+                spotify_resume(access_token_global)
+            elif action == 'lift':
+                print("➕ LIFT detected -> Queue new track")
+                spotify_queue(access_token_global, "spotify:track:4uLU6hMCjMI75M1A2tKUQC")
+            elif action == 'right':
+                print("➡️ RIGHT detected -> Skip to next track")
+                spotify_next(access_token_global)
+            elif action == 'neutral':
+                print("😐 Neutral state - no action")
+
+        last_action = action
 
         
-
 # -----------------------------
 # Spotify helpers
 # -----------------------------
@@ -213,6 +252,8 @@ def spotify_pause(token: str):
     r = requests.put(url, headers=headers)
     if r.status_code not in (200, 204):
         print("[Spotify] Pause failed:", r.status_code, r.text)
+        return False
+    return True
 
 def spotify_resume(token: str):
     headers = {'Authorization': f"Bearer {token}"}
