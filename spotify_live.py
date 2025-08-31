@@ -2,6 +2,7 @@ import os
 import urllib.parse
 import requests
 from dotenv import load_dotenv
+import random
 
 from flask import Flask, redirect, request, jsonify, session
 import cortex
@@ -15,8 +16,8 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = 'pk'
 
-SPOTIFY_CLIENT_ID = 'REDACTED_PASSWORD_1'
-SPOTIFY_CLIENT_SECRET = 'REDACTED_PASSWORD_2'
+SPOTIFY_CLIENT_ID = ''
+SPOTIFY_CLIENT_SECRET = ''
 REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:5000/callback")
 
 AUTH_URL = "https://accounts.spotify.com/authorize"
@@ -24,15 +25,17 @@ TOKEN_URL = "https://accounts.spotify.com/api/token"
 API_BASE_URL = "https://api.spotify.com/v1/"
 
 # Global (in-memory) token for demo purposes
-access_token_global = None
+access_token_global = 'BQCVffyW3H8ovmi6s-b8xqwhwYckozrp-bXn_aWNLWeXzVv0yBgqo_YIV5E6tCDJF2tJkl43uP256z-Lg8pa0QLrTux0BPmUPwC8sZ0U3dvJeiHcFr9A9lD5vfNWLulMnxOk6EbALqI'
 last_action = None
+song_uri = None
+last_metrics = None
 
 # -----------------------------
 # Emotiv / Cortex setup copied from your working live.py
 # -----------------------------
 # CHANGE THESE 3 to your stuff
-EMOTIV_CLIENT_ID = "REDACTED_PASSWORD_3"
-EMOTIV_CLIENT_SECRET = "REDACTED_PASSWORD_4"
+EMOTIV_CLIENT_ID = ""
+EMOTIV_CLIENT_SECRET = ""
 PROFILE_NAME = "Cognihacks"
 HEADSET_ID = "INSIGHT2-0B15A16B"  # optional
 
@@ -127,6 +130,8 @@ class LiveAdvance:
         print('Mental Command detected:', data)
     
     def on_new_met_data(self, *args, **kwargs):
+        global song_uri, last_metrics
+
         data = kwargs.get('data', {})
         metrics = data.get('met', [])
         timestamp = data.get('time')
@@ -136,16 +141,16 @@ class LiveAdvance:
             print(f"[MET] time={timestamp} stress={metrics[0]:.2f} engage={metrics[1]:.2f} "
                 f"interest={metrics[2]:.2f} relax={metrics[3]:.2f} "
                 f"excite={metrics[4]:.2f} focus={metrics[5]:.2f}")
+        # song_uri = recommend_song(metrics[:6])
+        last_metrics = metrics[:6]
+        # print(song_uri)
+
 
     def on_new_pow_data(self, *args, **kwargs):
         data = kwargs.get('data', {})
         powers = data.get('pow', [])
         timestamp = data.get('time')
 
-        # Band powers: ["theta", "alpha", "lowBeta", "highBeta", "gamma"]
-        if powers:
-            print(f"[POW] time={timestamp} theta={powers[0]:.2f} alpha={powers[1]:.2f} "
-                f"lowBeta={powers[2]:.2f} highBeta={powers[3]:.2f} gamma={powers[4]:.2f}")
 
     def on_get_mc_active_action_done(self, *args, **kwargs):
         data = kwargs.get('data')
@@ -194,30 +199,21 @@ class SpotifyLive(LiveAdvance):
         super().__init__(app_client_id, app_client_secret, **kwargs)
 
     def on_new_com_data(self, *args, **kwargs):
-        global access_token_global
-        global last_action 
+        global access_token_global, last_action, song_uri, last_metrics
         
         data = kwargs.get('data', {}) or {}
         metrics = data.get('met', [])
         powers = data.get('pow', [])
         timestamp = data.get('time')
 
-        # The order of metrics is fixed: ["stress", "engagement", "interest", "relaxation", "excitement", "focus"]
-        if metrics:
-            print(f"[MET] time={timestamp} stress={metrics[0]:.2f} engage={metrics[1]:.2f} "
-                f"interest={metrics[2]:.2f} relax={metrics[3]:.2f} "
-                f"excite={metrics[4]:.2f} focus={metrics[5]:.2f}")
-            
         # Band powers: ["theta", "alpha", "lowBeta", "highBeta", "gamma"]
         if powers:
             print(f"[POW] time={timestamp} theta={powers[0]:.2f} alpha={powers[1]:.2f} "
                 f"lowBeta={powers[2]:.2f} highBeta={powers[3]:.2f} gamma={powers[4]:.2f}")
 
-
-        # ("Raw COM data:", data)
         action = data.get('action')
         power = data.get('power', 0.0)
-        print(f"[COM] action={action} power={power:.2f} time={data.get('time')}")
+        # print(f"[COM] action={action} power={power:.2f} time={data.get('time')}")
 
         if not access_token_global:
             # Mildly inconvenient truth, not sugar-coated.
@@ -226,14 +222,17 @@ class SpotifyLive(LiveAdvance):
 
         if action != last_action and power >= 0.5:
             if action == 'push':
-                print("🎯 PUSH detected -> Spotify PAUSE")
+                print("🫷 PUSH detected -> Spotify PAUSE")
                 spotify_pause(access_token_global)
             elif action == 'drop':
-                print("🔄 DROP detected -> Spotify RESUME")
+                print("🫳 DROP detected -> Spotify RESUME")
                 spotify_resume(access_token_global)
             elif action == 'lift':
-                print("➕ LIFT detected -> Queue new track")
-                spotify_queue(access_token_global, "spotify:track:4uLU6hMCjMI75M1A2tKUQC")
+                print("➕🏋️‍♀️LIFT detected -> Queue new track")
+                print("Last metrics:", last_metrics)
+                song_uri = recommend_song(last_metrics)
+                print("Queuing song:", song_uri)
+                spotify_queue(access_token_global, song_uri)
             elif action == 'right':
                 print("➡️ RIGHT detected -> Skip to next track")
                 spotify_next(access_token_global)
@@ -282,6 +281,70 @@ def spotify_next(token: str, device_id: str = None):
     r = requests.post(url, headers=headers, params=params)
     if r.status_code != 204:  # success = no content
         print("[Spotify] Skip failed:", r.status_code, r.text)
+
+def map_metrics_to_audio_features(metrics):
+    metrics = [float(m) for m in metrics]
+    stress, engage, interest, relax, excite, focus = metrics
+
+    return {
+        "target_valence": max(0.0, 1 - stress),         # happy vs sad
+        "target_energy": (engage + excite + focus) / 3, # overall drive
+        "target_danceability": excite,                  # dance feel
+        "target_tempo": 60 + (1 - relax) * 120          # 60–180 bpm
+    }
+
+# def recommend_song(token, metrics, seed_genres=["electronic", "pop", "rock"]):
+#     headers = {"Authorization": f"Bearer {token}"}
+#     features = map_metrics_to_audio_features(metrics)
+#     print ("[Spotify] Recommending song with features:", features)
+
+#     url = f"{API_BASE_URL}recommendations"
+#     params = {
+#         "limit": 1,
+#         "seed_genres": ",".join(seed_genres),
+#         **features
+#     }
+    
+#     r = requests.get(url, headers=headers, params=params)
+#     print("Request URL:", r.url)
+#     if r.status_code != 200:
+#         print("[Spotify] Recommendation failed:", r.status_code, r.text)
+#         return None
+    
+#     recs = r.json()["tracks"]
+#     if not recs:
+#         return None
+    
+#     track = recs[0]
+#     print(f"🎵 Recommended: {track['name']} by {track['artists'][0]['name']}")
+#     return track["uri"]
+
+TRACK_POOLS = {
+    "calm_focus": [
+        "spotify:track:3jjujdWJ72nww5eGnfs2E7",  # lo-fi
+        "spotify:track:4VqPOruhp5EdPBeR92t6lQ"   # ambient
+    ],
+    "high_energy": [
+        "spotify:track:4uLU6hMCjMI75M1A2tKUQC",  # Rick Astley
+        "spotify:track:0VjIjW4GlUZAMYd2vXMi3b"   # Blinding Lights
+    ],
+    "relaxed": [
+        "spotify:track:3UmaczJpikHgJFyBTAJVoz",  # chill acoustic
+        "spotify:track:0ofHAoxe9vBkTCp2UQIavz"   # mellow indie
+    ],
+}
+
+def recommend_song(metrics):
+    stress, engage, interest, relax, excite, focus = metrics
+    
+    if relax > 0.7 and focus > 0.6 and stress < 0.5:
+        mood = "calm_focus"
+    elif excite > 0.7 and engage > 0.6:
+        mood = "high_energy"
+    else:
+        mood = "relaxed"
+    
+    return random.choice(TRACK_POOLS[mood])
 
 # -----------------------------
 # Flask routes
